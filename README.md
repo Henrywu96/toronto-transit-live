@@ -15,8 +15,8 @@ Every scheduled train in the Toronto area moving on a real street map as a littl
 Click a train to see where it is going and its stops, or a station for its next departures.
 
 Built on the same framework as Edmonton LRT Live: **Vite + React + TypeScript**, a **MapLibre GL** map, and the
-trains drawn by **three.js** inside the map. The timetables come from the operators' **GTFS feeds**, which a GitHub
-Action downloads and compacts every day.
+trains drawn by **three.js** inside the map. The timetables come from the operators' **GTFS feeds**, which every
+Vercel build downloads and compacts; a GitHub Action has Vercel rebuild once a day.
 
 > Train positions are worked out from the published timetables, not from GPS. They show where each train is
 > scheduled to be, so a delayed train will not appear late here.
@@ -25,7 +25,7 @@ Action downloads and compacts every day.
 
 ```
 TTC, GO Transit, UP Express, VIA Rail GTFS feeds (zips, all buses and trains)
-        │  scripts/build-gtfs.mjs  (GitHub Actions, daily)
+        │  scripts/build-gtfs.mjs  (on every Vercel build, daily)
         ▼
 public/data/transit.json  (about 1 MB, ~250 KB gzipped: lines, stations, track shapes, every train trip, calendars)
         │  fetched once by the browser
@@ -126,7 +126,8 @@ train · <kbd>C</kbd> city · <kbd>O</kbd> whole region · <kbd>D</kbd> downtown
 ## Project layout
 
 ```
-.github/workflows/deploy.yml   build + deploy to GitHub Pages (push, daily, manual)
+.github/workflows/deploy.yml   asks Vercel to rebuild once a day (fresh timetables)
+vercel.json                    Vercel build: download the feeds, build the timetable, build the site
 scripts/build-gtfs.mjs         four GTFS feeds + Terminal Link → public/data/transit.json
 src/
   App.tsx, main.tsx            React entry: loads the timetable, lays out the HUD

@@ -57,7 +57,7 @@ export default function App() {
           <h1>The timetable did not load</h1>
           <p>{error}</p>
           <p className="muted">
-            Build it with <code>npm run data</code>, which reads the TTC, GO Transit, UP Express and VIA Rail feeds. GitHub Actions does this on every deploy.
+            Build it with <code>npm run data</code>, which reads the TTC, GO Transit, UP Express and VIA Rail feeds. Vercel does this on every deploy.
           </p>
         </div>
       </div>
