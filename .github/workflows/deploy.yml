@@ -1,0 +1,65 @@
+# Builds the site and publishes it to GitHub Pages.
+# Runs on every push to main, once a day (to pick up timetable changes), and on demand.
+# The TTC, GO Transit, UP Express and VIA Rail GTFS feeds are downloaded fresh each time; if a
+# download fails the deploy stops and the site that is already online stays as it was.
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '17 8 * * *' # every day, about 3–4 am in Toronto
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Build the timetable from the GTFS feeds
+        run: npm run data:download
+
+      - name: Build the site
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      # optional: also rebuild a Vercel copy of the site (set the VERCEL_DEPLOY_HOOK_URL secret to use it)
+      - name: Trigger the Vercel rebuild
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        env:
+          VERCEL_HOOK: ${{ secrets.VERCEL_DEPLOY_HOOK_URL }}
+        run: |
+          if [ -z "$VERCEL_HOOK" ]; then echo "No Vercel hook configured – skipping"; exit 0; fi
+          curl --fail --show-error --silent --request POST "$VERCEL_HOOK"
