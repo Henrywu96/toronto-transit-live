@@ -35,6 +35,8 @@ const FEEDS = [
     ],
     // City of Toronto open data catalogue: finds the current zip if the address above moves
     ckan: 'https://ckan0.cf.opendata.inter.prod-toronto.ca/api/3/action/package_show?id=ttc-routes-and-schedules',
+    // the copy of the same feed that the Mobility Database (mobilitydatabase.org) downloads every day
+    mirror: 'mdb-732',
   },
   { key: 'go', name: 'GO Transit', match: /^go(?![a-z])/i, env: 'GO_GTFS_URL', urls: ['https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/GO-GTFS.zip'] },
   { key: 'up', name: 'UP Express', match: /^up(?![a-z])/i, env: 'UP_GTFS_URL', urls: ['https://assets.metrolinx.com/raw/upload/Documents/Metrolinx/Open%20Data/UP-GTFS.zip'] },
@@ -88,7 +90,18 @@ async function main() {
       /* no local copies: download */
     }
   }
-  const sources = dir ? await localSources(dir) : await downloadAll();
+  let sources;
+  try {
+    sources = dir ? await localSources(dir) : await downloadAll();
+  } catch (err) {
+    if (dir) throw err;
+    // keep the live timetable rather than fail the whole deploy
+    const kept = await liveTimetable(err);
+    await mkdir(dirname(OUT), { recursive: true });
+    await writeFile(OUT, kept.json);
+    console.warn(`⚠ ${OUT}: kept the live timetable from ${kept.generatedAt}. The next build will try the downloads again.`);
+    return;
+  }
   const data = await build(sources);
   const json = JSON.stringify(data);
   await mkdir(dirname(OUT), { recursive: true });
@@ -186,8 +199,10 @@ async function localSources(dir) {
   return out;
 }
 
+const USER_AGENT = 'toronto-transit-live (+https://toronto-transit-live.vercel.app/)';
+
 async function fetchZip(url) {
-  const res = await fetch(url, { headers: { 'user-agent': 'toronto-transit-live (+GitHub Actions)' }, signal: AbortSignal.timeout(300_000) });
+  const res = await fetch(url, { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(300_000) });
   if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
   const buf = Buffer.from(await res.arrayBuffer());
   if (buf.length < 1024 || buf[0] !== 0x50 || buf[1] !== 0x4b) throw new Error('the response is not a zip file');
@@ -202,6 +217,50 @@ async function ckanZip(api) {
   zips.sort((a, b) => String(b.last_modified ?? '').localeCompare(String(a.last_modified ?? '')));
   if (!zips.length) throw new Error('the catalogue lists no zip file');
   return fetchZip(zips[0].url);
+}
+
+/** the Mobility Database's latest copy of a feed, found through its public catalogue (urls.latest) */
+async function mobilityDatabaseZip(id) {
+  const res = await fetch('https://files.mobilitydatabase.org/feeds_v2.csv', { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(120_000) });
+  if (!res.ok) throw new Error(`Mobility Database catalogue HTTP ${res.status}`);
+  const rows = (await res.text()).split(/\r?\n/);
+  const head = splitCsv(rows[0]);
+  const idCol = head.indexOf('id');
+  const latestCol = head.indexOf('urls.latest');
+  if (idCol < 0 || latestCol < 0) throw new Error('the Mobility Database catalogue has no id or urls.latest column');
+  for (const row of rows) {
+    if (!row.includes(id)) continue;
+    const cells = splitCsv(row);
+    if (cells[idCol] === id && cells[latestCol]) return fetchZip(cells[latestCol]);
+  }
+  throw new Error(`the Mobility Database catalogue has no copy of ${id}`);
+}
+
+/** the timetable the live site is serving now, for when a feed can't be downloaded */
+async function liveTimetable(err) {
+  const host = process.env.VERCEL_PROJECT_PRODUCTION_URL;
+  const url = process.env.FALLBACK_DATA_URL || (host ? `https://${host}/data/transit.json` : '');
+  if (!url || argv.includes('--no-fallback')) throw err;
+  console.warn(`\n⚠ ${err.message}\n  Keeping the timetable that is live now instead: ${url}`);
+  let res;
+  try {
+    res = await fetch(url, { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(60_000) });
+  } catch (e) {
+    throw new Error(`${err.message} The live timetable could not be fetched either (${e.message}).`);
+  }
+  if (!res.ok) throw new Error(`${err.message} The live timetable could not be fetched either (HTTP ${res.status}).`);
+  const json = await res.text();
+  let data;
+  try {
+    data = JSON.parse(json);
+  } catch {
+    throw new Error(`${err.message} The live timetable at ${url} is not JSON.`);
+  }
+  if (data?.version !== 2 || !Array.isArray(data.trips) || !data.trips.length) throw new Error(`${err.message} The live timetable at ${url} is empty or in an old format.`);
+  // say so when the kept timetable is about to run out
+  const today = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+  for (const f of data.feeds ?? []) if (f.end && f.end < today) console.warn(`  ${f.name}: the kept timetable ended on ${f.end}, so its trains won't show until a download works again.`);
+  return { json, generatedAt: data.generatedAt ?? 'an earlier build' };
 }
 
 async function downloadAll() {
@@ -227,6 +286,15 @@ async function downloadAll() {
       try {
         console.log(`  asking the open data catalogue for ${feed.name}`);
         got = await ckanZip(feed.ckan);
+      } catch (err) {
+        last = err;
+        console.warn(`  failed: ${err.message}`);
+      }
+    }
+    if (!got && feed.mirror && !process.env[feed.env]) {
+      try {
+        console.log(`  trying the Mobility Database's copy of ${feed.name} (${feed.mirror})`);
+        got = await mobilityDatabaseZip(feed.mirror);
       } catch (err) {
         last = err;
         console.warn(`  failed: ${err.message}`);

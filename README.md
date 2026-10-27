@@ -111,6 +111,12 @@ downloads them. `npm run data:download` always downloads fresh copies. Other opt
 `--out <file>`, and the `TTC_GTFS_URL`, `GO_GTFS_URL`, `UP_GTFS_URL`, `VIA_GTFS_URL` environment variables to use
 other download addresses.
 
+If the TTC's own address fails, the builder asks the City's open data catalogue, then tries the copy the
+[Mobility Database](https://mobilitydatabase.org/feeds/gtfs/mdb-732) keeps. If a feed still can't be downloaded,
+a Vercel build keeps the timetable the live site is serving (`/data/transit.json` on the production domain)
+instead of failing, so code changes still deploy and the next daily rebuild tries again. `FALLBACK_DATA_URL` points
+it at another copy; `--no-fallback` makes it fail instead.
+
 ### URL parameters
 
 | Parameter | Example | Effect |
